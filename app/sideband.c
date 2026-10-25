@@ -11,6 +11,12 @@
  *   41  set DX7 parameters: track, then (parameter, value) pairs, up to 65.
  *       0..144 voice parameters, 145..154 the name, 155 operator on/off
  *       (bit 5 OP1 .. bit 0 OP6). Applied live, without cutting notes.
+ *   42  write steps (version 2): track, first step, then 4 bytes a step as
+ *       struct groove_step (note, velocity, drums low, drums high), up to 15.
+ *       The pattern changes in place: the transport keeps running, the other
+ *       tracks keep sounding, undo works. The engine ignores a track that
+ *       isn't a normal one and a range past step 64; the client validates
+ *       the steps (groove_sequence_valid's rules) and reads them back.
  *
  * Changes made on the panel aren't announced (no room for it): an editor
  * reads the track back (commands 1 and 2) to see them.
@@ -24,9 +30,8 @@
  * so notes keep sounding, undo works and the project shows edited. */
 static SMALL int set_parameters(unsigned track, const uint8_t *pairs, unsigned count)
 {
-    if (track >= GROOVE_TRACKS || groove_source_type(track) != GROOVE_DX7 ||
-        groove_track_role(track) == GROOVE_TRACK_OFF)
-        return GROOVE_PROJECT_INVALID;
+    /* groove_fm_copy refuses a bad track; the edit calls skip a track that
+     * isn't DX7 or is off. */
     for (unsigned i = 0; i < count; ++i) {
         unsigned parameter = pairs[2 * i], value = pairs[2 * i + 1];
         uint8_t patch[156];
@@ -59,6 +64,11 @@ SMALL int sideband_command(unsigned cmd, const uint8_t *data, unsigned n, uint8_
     }
     if (cmd == 41 && n >= 3 && (n & 1U))
         return set_parameters(data[0], data + 1, (n - 1) / 2);
+    if (cmd == 42 && n >= 6) {
+        groove_edit_checkpoint(0x80000U + data[0]);
+        groove_sequence_replace(data[0], data[1], (const struct groove_step *)(const void *)(data + 2), (n - 2) / 4);
+        return 0;
+    }
     return SIDEBAND_NOT_MINE;
 }
 
