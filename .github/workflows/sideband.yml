@@ -75,10 +75,10 @@ jobs:
         env:
           FM1_SOURCE_URL: https://github.com/${{ github.repository }}/archive/${{ github.sha }}.tar.gz
         run: |
-          ./build.bat --web
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          ./build.bat --package
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # build.bat's nested Windows PowerShell loses its modules under
+          # pwsh on the runner; run the same scripts directly.
+          ./tools/Build-Web.ps1
+          ./sdk/Build.ps1 -Package
           Get-ChildItem build -Recurse -Include *.fwsc,*.html | ForEach-Object { "$($_.FullName) $($_.Length)" }
       - uses: actions/upload-artifact@v4
         if: always()
