@@ -1,0 +1,104 @@
+# Builds and tests the fork: host tests on Linux (the APP against the
+# browser simulator's platform, with and without sanitizers), then on
+# Windows the browser preview and the firmware with its workbench.
+name: build
+on:
+  push:
+    branches: [main, sideband]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host tests (clang)
+        run: ./tools/host-test/run.sh
+      - name: Host tests (gcc, AddressSanitizer + UBSan)
+        run: CC=gcc SANITIZE=1 ./tools/host-test/run.sh
+
+  windows:
+    needs: host-tests
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      FM1_PI32_TOOLCHAIN: C:\JL\pi32
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache the JieLi toolchain and WASI SDK
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\JL
+            build\tools
+          key: toolchains-jieli-2.5.3-wasi-27
+      - name: Install the JieLi toolchain 2.5.3
+        shell: pwsh
+        timeout-minutes: 20
+        run: |
+          if (Test-Path 'C:\JL\pi32\bin\clang.exe') { Write-Host 'Cached.'; exit 0 }
+          curl.exe --fail --location --retry 3 --output jl.exe https://jl-update.oss-cn-shenzhen.aliyuncs.com/2.5.3.exe
+          # An Inno Setup installer (its silent mode waits on something):
+          # unpack it instead, and any MSI inside it.
+          choco install innoextract -y --no-progress | Out-Null
+          innoextract --silent --extract --output-dir C:\jl-unpacked jl.exe
+          if ($LASTEXITCODE) { throw "innoextract failed ($LASTEXITCODE)" }
+          $find = { Get-ChildItem C:\jl-unpacked -Recurse -Filter clang.exe -ErrorAction SilentlyContinue |
+                    Where-Object { $_.FullName -match 'pi32\\bin\\clang.exe$' } | Select-Object -First 1 }
+          $clang = & $find
+          if (!$clang) {
+            foreach ($msi in Get-ChildItem C:\jl-unpacked -Recurse -Filter *.msi) {
+              Write-Host "Unpacking $($msi.FullName)"
+              Start-Process msiexec -ArgumentList "/a `"$($msi.FullName)`" /qn TARGETDIR=C:\jl-unpacked\msi-$($msi.BaseName)" -Wait
+            }
+            foreach ($zip in Get-ChildItem C:\jl-unpacked -Recurse -Include *.7z,*.zip) {
+              Write-Host "Unpacking $($zip.FullName)"
+              & 7z x $zip.FullName "-o$($zip.DirectoryName)\$($zip.BaseName)" -y | Out-Null
+            }
+            $clang = & $find
+          }
+          if (!$clang) {
+            Get-ChildItem C:\jl-unpacked -Recurse -Depth 4 -ErrorAction SilentlyContinue | Select-Object -First 80 | ForEach-Object FullName
+            throw 'No pi32\bin\clang.exe in the installer'
+          }
+          $pi32 = $clang.Directory.Parent.FullName
+          New-Item -ItemType Directory -Force C:\JL | Out-Null
+          Copy-Item -Recurse $pi32 C:\JL\pi32
+          Write-Host "Toolchain from $pi32"
+          (Get-FileHash C:\JL\pi32\bin\clang.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+      - name: Browser preview (simulator)
+        shell: pwsh
+        run: ./tools/Build-Web.ps1 -LocalPreview
+      - name: Firmware and workbench
+        shell: pwsh
+        env:
+          FM1_SOURCE_URL: https://github.com/${{ github.repository }}/archive/${{ github.sha }}.tar.gz
+        run: |
+          # build.bat's nested Windows PowerShell loses its modules under
+          # pwsh on the runner; run the same scripts directly.
+          ./tools/Build-Web.ps1
+          ./sdk/Build.ps1 -Package
+          Get-ChildItem build -Recurse -Include *.fwsc,*.html | ForEach-Object { "$($_.FullName) $($_.Length)" }
+          # What Sideband's updater needs beside the package (the same fields
+          # the workbench pins).
+          $fwsc = Get-ChildItem build -Recurse -Filter FM1_OFFICIAL_OPEN.fwsc | Select-Object -First 1
+          $id = Get-Content (Join-Path $fwsc.Directory.Parent.FullName 'build-identity.json') -Raw | ConvertFrom-Json
+          $meta = [ordered]@{schema=1; product=(Select-String -Path app/version.h -Pattern 'FM1_UPDATE_PRODUCT "([^"]+)"').Matches[0].Groups[1].Value;
+            family=7; release_version=$id.release_version; build_id=$id.build_id;
+            sha256=(Get-FileHash $fwsc.FullName -Algorithm SHA256).Hash.ToLowerInvariant(); bytes=$fwsc.Length;
+            loader_sha256=(Get-FileHash sdk/tools/pack/ota.bin -Algorithm SHA256).Hash.ToLowerInvariant();
+            source_url=$env:FM1_SOURCE_URL; commit=$env:GITHUB_SHA}
+          New-Item -ItemType Directory -Force build/sideband | Out-Null
+          Copy-Item $fwsc.FullName build/sideband/FM1_OFFICIAL_OPEN.fwsc
+          $meta | ConvertTo-Json | Set-Content build/sideband/sideband-update.json -Encoding utf8
+          Get-Content build/sideband/sideband-update.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sideband-firmware
+          path: |
+            build/preview/index.html
+            build/official-web/*
+            build/sideband/*
+          if-no-files-found: warn

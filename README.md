@@ -1,3 +1,13 @@
+# FM1 Open, Sideband fork
+
+This fork of [M-VAVE's FM1 Open](https://github.com/m-vave/fm1_open) adds a few
+protocol extensions for [Sideband](https://github.com/scottrabara/Sideband), a
+sound editor for the FM-1: live DX7 parameter edits (over USB and Bluetooth),
+a track map, and change notices when a DX7 track's voice changes on the
+panel. They are additive; everything below describes upstream V14 and still
+applies. The protocol is documented at the top of `app/sideband.c`; host tests
+run with `tools/host-test/run.sh`.
+
 # FM1 Open V14
 
 English · [简体中文](README.zh-CN.md)

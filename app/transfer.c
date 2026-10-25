@@ -3,6 +3,7 @@
 #include "tuning_hook.h"
 #include "fm_patch.h"
 #include "fm1_engine_control.h"
+#include "sideband.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -96,11 +97,14 @@ static int command(unsigned cmd, const uint8_t *data, unsigned n, uint8_t *out, 
 {
     int r = GROOVE_PROJECT_INVALID;
     *count = 0;
+    r = sideband_command(cmd, data, n, out, count);
+    if (r != SIDEBAND_NOT_MINE) return r;
+    r = GROOVE_PROJECT_INVALID;
     /* Additive capability reply; command 21 retains its old exact layout. */
     if (cmd == 22 && !n) {
         out[0]=1; out[1]=128; out[2]=4; out[3]=(uint8_t)groove_fm_library_available();
         put32(out+4,GROOVE_SAMPLE_LIMIT); out[8]=3; /* session roles and extended/synchronized delay */
-        *count=9; return 0;
+        *count=9; sideband_capabilities(out, count); return 0;
     }
     if (cmd == 21 && !n) {
         out[0] = groove_tuning_capture && groove_tuning_apply ? 1 : 0;
