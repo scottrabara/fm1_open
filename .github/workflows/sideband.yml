@@ -21,6 +21,7 @@ jobs:
   windows:
     needs: host-tests
     runs-on: windows-latest
+    timeout-minutes: 60
     env:
       FM1_PI32_TOOLCHAIN: C:\JL\pi32
     steps:
@@ -34,20 +35,35 @@ jobs:
           key: toolchains-jieli-2.5.3-wasi-27
       - name: Install the JieLi toolchain 2.5.3
         shell: pwsh
+        timeout-minutes: 20
         run: |
           if (Test-Path 'C:\JL\pi32\bin\clang.exe') { Write-Host 'Cached.'; exit 0 }
           curl.exe --fail --location --retry 3 --output jl.exe https://jl-update.oss-cn-shenzhen.aliyuncs.com/2.5.3.exe
-          # Silent switches for the common installer kinds, one after another.
-          foreach ($switches in @('/S /D=C:\JL', '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=C:\JL', '/quiet')) {
-            Write-Host "Trying jl.exe $switches"
-            $p = Start-Process -FilePath .\jl.exe -ArgumentList $switches -Wait -PassThru
-            Write-Host "exit $($p.ExitCode)"
-            if (Test-Path 'C:\JL\pi32\bin\clang.exe') { break }
+          $bytes = [IO.File]::ReadAllBytes("$PWD\jl.exe")
+          $text = [Text.Encoding]::ASCII.GetString($bytes)
+          foreach ($kind in @('Nullsoft', 'Inno Setup', '7-Zip', 'WiX', 'InstallShield', 'Advanced Installer', 'MSI')) {
+            if ($text.Contains($kind)) { Write-Host "Installer mentions: $kind" }
           }
-          if (!(Test-Path 'C:\JL\pi32\bin\clang.exe')) {
-            Get-ChildItem C:\JL -Recurse -Depth 2 -ErrorAction SilentlyContinue | Select-Object -First 40 | ForEach-Object FullName
-            throw 'JieLi toolchain did not install to C:\JL\pi32'
+          Write-Host "Installer size $($bytes.Length)"
+          # Most installers unpack with 7-Zip (on the runner); look for pi32 inside.
+          & 7z x jl.exe -oC:\jl-unpacked -y | Select-Object -Last 3
+          $clang = Get-ChildItem C:\jl-unpacked -Recurse -Filter clang.exe -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match 'pi32\\bin' } | Select-Object -First 1
+          if ($clang) {
+            $pi32 = $clang.Directory.Parent.FullName
+            New-Item -ItemType Directory -Force C:\JL | Out-Null
+            Copy-Item -Recurse $pi32 C:\JL\pi32
+            Write-Host "Unpacked $pi32"
+          } else {
+            Get-ChildItem C:\jl-unpacked -Recurse -Depth 3 -ErrorAction SilentlyContinue | Select-Object -First 60 | ForEach-Object FullName
+            foreach ($switches in @('/S /D=C:\JL', '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=C:\JL')) {
+              Write-Host "Trying jl.exe $switches"
+              $p = Start-Process -FilePath .\jl.exe -ArgumentList $switches -PassThru
+              if (!$p.WaitForExit(300000)) { $p.Kill(); Write-Host 'Timed out' }
+              if (Test-Path 'C:\JL\pi32\bin\clang.exe') { break }
+            }
           }
+          if (!(Test-Path 'C:\JL\pi32\bin\clang.exe')) { throw 'No JieLi pi32 toolchain at C:\JL\pi32' }
+          (Get-FileHash C:\JL\pi32\bin\clang.exe -Algorithm SHA256).Hash
       - name: Browser preview (simulator)
         shell: pwsh
         run: ./tools/Build-Web.ps1 -LocalPreview
