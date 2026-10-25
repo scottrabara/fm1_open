@@ -93,12 +93,11 @@ static uint32_t get32(const uint8_t *p)
 { return p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
 static void put32(uint8_t *p, uint32_t value)
 { for (unsigned i = 0; i < 4; ++i) p[i] = (uint8_t)(value >> (i * 8U)); }
-static unsigned command_source;
 static int command(unsigned cmd, const uint8_t *data, unsigned n, uint8_t *out, unsigned *count)
 {
     int r = GROOVE_PROJECT_INVALID;
     *count = 0;
-    r = sideband_command(cmd, command_source, data, n, out, count);
+    r = sideband_command(cmd, data, n, out, count);
     if (r != SIDEBAND_NOT_MINE) return r;
     r = GROOVE_PROJECT_INVALID;
     /* Additive capability reply; command 21 retains its old exact layout. */
@@ -241,7 +240,6 @@ void groove_transfer_poll(void)
     uint32_t now = fm1_millis();
     if (transfer && now - last_activity > 10000U)
         transfer_cancel();
-    sideband_poll(now);
     /* Retry each port independently. A blocked BLE reply never delays USB
      * notes or its transfer ACK. Cached retries also belong to that port. */
     for (unsigned p=0;p<3;++p) if (replies[p].pending) {
@@ -289,7 +287,6 @@ void groove_transfer_poll(void)
             for (unsigned track=0;track<GROOVE_TRACKS;++track)
                 if (groove_track_role(track) != GROOVE_TRACK_OFF && channel == groove_midi_input_channel(track))
                     (void)groove_fm_import(track, patch);
-            sideband_dump_applied();
             return;
         }
         goto discard;
@@ -330,7 +327,6 @@ void groove_transfer_poll(void)
     c->request_length = n;
     c->reply_length = 0;
     unsigned count = 0;
-    command_source = source;
     int r = command(c->request[5], data, bytes, response + 1, &count);
     if (!r && (transfer || groove_samples_status() == 3)) session_source = source;
     response[0] = (uint8_t)(r < 0 ? 64 - r : r);

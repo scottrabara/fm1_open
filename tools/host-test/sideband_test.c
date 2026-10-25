@@ -104,51 +104,10 @@ int main(void)
         break;
     }
 
-    /* 42: watch over Bluetooth. A panel edit sends an event; Sideband's own don't. */
+    /* 42 is gone (no Flash for it): refused like any unknown command. */
     uint8_t on = (uint8_t)(dx7 + 1);
     ask(BLE, 42, &on, 1, r);
-    CHECK(r[0] == 0, "watch: status %u", r[0]);
-    sim_midi_capture(1);
-    uint8_t own[] = {(uint8_t)dx7, 134, 3};
-    uint8_t m[200]; unsigned k = frame(m, 41, own, sizeof own);
-    send_raw(BLE, m, k);
-    run(100);
-    unsigned port, cmd, count, events = 0, replies = 0;
-    while (next_reply(&port, &cmd, r, &count)) { if (cmd == 0x6A) ++events; else ++replies; }
-    CHECK(replies == 1 && events == 0, "own edit: %u replies, %u events", replies, events);
-    groove_fm_edit((unsigned)dx7, 134, 1); /* as the panel does */
-    run(100);
-    events = 0;
-    while (next_reply(&port, &cmd, r, &count))
-        if (cmd == 0x6A) { ++events; CHECK(port == BLE && count == 2 && r[1] == dx7, "event: port %u track %u", port, r[1]); }
-    CHECK(events == 1, "panel edit: %u events", events);
-    uint8_t dump[163] = {0xF0, 0x43, 0x00, 0x00, 0x01, 0x1B};
-    patch_of((unsigned)dx7, patch);
-    memcpy(dump + 6, patch, 155); dump[6 + 134] = 1;
-    unsigned sum = 0; for (unsigned i = 6; i < 161; i++) sum += dump[i];
-    dump[161] = (0U - sum) & 127; dump[162] = 0xF7;
-    dump[2] = (uint8_t)groove_midi_input_channel((unsigned)dx7);
-    send_raw(BLE, dump, sizeof dump);
-    run(100);
-    patch_of((unsigned)dx7, patch);
-    CHECK(patch[134] == 1, "dump: algorithm %u", patch[134]);
-    events = 0;
-    while (next_reply(&port, &cmd, r, &count)) if (cmd == 0x6A) ++events;
-    CHECK(events == 0, "the watcher's own dump sent %u events", events);
-    /* Another track's edit doesn't wake the watcher. */
-    for (unsigned t = 0; t < 8; t++) if (t != (unsigned)dx7 && groove_source_type(t) == GROOVE_DX7) {
-        groove_fm_edit(t, 134, 1); run(100); events = 0;
-        while (next_reply(&port, &cmd, r, &count)) if (cmd == 0x6A) ++events;
-        CHECK(events == 0, "track %u's edit sent %u events", t, events);
-        break;
-    }
-    uint8_t off = 0;
-    ask(BLE, 42, &off, 1, r);
-    groove_fm_edit((unsigned)dx7, 134, 1);
-    run(100);
-    events = 0;
-    while (next_reply(&port, &cmd, r, &count)) if (cmd == 0x6A) ++events;
-    CHECK(events == 0, "stopped watching, still %u events", events);
+    CHECK(r[0] != 0, "watch still answered");
 
     /* V14's own commands still answer as before. */
     n = ask(USB, 0, 0, 0, r);
