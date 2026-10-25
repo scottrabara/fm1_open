@@ -61,7 +61,7 @@ int main(void)
 
     /* 22: V14's nine bytes, then 'S' and the version. */
     unsigned n = ask(BLE, 22, 0, 0, r);
-    CHECK(n == 12 && r[0] == 0 && r[10] == 'S' && r[11] == 1, "capabilities: %u bytes, S=%c v%u", n, r[10], r[11]);
+    CHECK(n == 12 && r[0] == 0 && r[10] == 'S' && r[11] == 2, "capabilities: %u bytes, S=%c v%u", n, r[10], r[11]);
 
     /* 40: the track map. */
     n = ask(USB, 40, 0, 0, r);
@@ -104,10 +104,37 @@ int main(void)
         break;
     }
 
-    /* 42 is gone (no Flash for it): refused like any unknown command. */
+    /* 42: write steps in place, while the sequencer plays. */
+    unsigned t42 = (unsigned)dx7;
+    struct groove_view view;
+    uint8_t startm[] = {0xFA};
+    send_raw(USB, startm, 1); run(400);
+    groove_sequence_view(t42, 0, &view);
+    unsigned was_playing = view.playing;
+    printf("playing before: %u\n", was_playing);
+    uint8_t steps[2 + 8] = {(uint8_t)t42, 5, 64, 100, 0x40 /* gate 2 */, 0, 67, 90, 0x00, 0x10 /* tie */};
+    n = ask(BLE, 42, steps, sizeof steps, r);
+    CHECK(n == 1 && r[0] == 0, "write steps: status %u", r[0]);
+    struct groove_step cells[2];
+    groove_sequence_read(t42, 5, cells, 2);
+    CHECK(cells[0].note == 64 && cells[0].velocity == 100 && cells[0].drums == 0x40, "step 6: %u %u %04X", cells[0].note, cells[0].velocity, cells[0].drums);
+    CHECK(cells[1].note == 67 && cells[1].velocity == 90 && cells[1].drums == 0x1000, "step 7: %u %u %04X", cells[1].note, cells[1].velocity, cells[1].drums);
+    groove_sequence_view(t42, 0, &view);
+    CHECK(view.playing == was_playing, "the transport changed: %u -> %u", was_playing, view.playing);
+    /* Undo puts them back. */
+    CHECK(!groove_edit_undo(), "undo");
+    groove_sequence_read(t42, 5, cells, 1);
+    CHECK(!(cells[0].note == 64 && cells[0].velocity == 100 && cells[0].drums == 0x40), "undo left the step");
+    /* Past step 64: nothing changes. */
+    struct groove_step before[1]; groove_sequence_read(t42, 63, before, 1);
+    uint8_t past[2 + 8] = {(uint8_t)t42, 63, 1, 1, 0, 0, 2, 2, 0, 0};
+    ask(BLE, 42, past, sizeof past, r);
+    groove_sequence_read(t42, 63, cells, 1);
+    CHECK(cells[0].note == before[0].note && cells[0].velocity == before[0].velocity, "a range past 64 was written");
+    /* Too short: refused like an unknown command. */
     uint8_t on = (uint8_t)(dx7 + 1);
     ask(BLE, 42, &on, 1, r);
-    CHECK(r[0] != 0, "watch still answered");
+    CHECK(r[0] != 0, "a one-byte 42 was answered");
 
     /* V14's own commands still answer as before. */
     n = ask(USB, 0, 0, 0, r);

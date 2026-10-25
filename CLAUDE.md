@@ -9,7 +9,7 @@ groovebox), with extensions for the Sideband iOS editor
   (`sdk/lib/libfm1_engine.a`) is a closed binary. `web/engine` is the
   simulator's stand-in for that engine: change it only to mirror upstream.
 - **Sideband's extensions live in `app/sideband.c`** (protocol in its header
-  comment: commands 22 'S' marker, 40 track map, 41 set DX7 parameters),
+  comment: commands 22 'S' marker, 40 track map, 41 set DX7 parameters, 42 write steps),
   hooked from `app/transfer.c` in a few lines. Everything is additive: a
   client that never sends them sees V14 exactly.
 - **Flash is nearly full.** The app image must stay under 453,921 bytes
@@ -19,8 +19,9 @@ groovebox), with extensions for the Sideband iOS editor
   ("FM1: N bytes app image"); mark new code `cold, minsize`.
 - **Use only engine calls the panel uses** (`groove_fm_edit`,
   `groove_fm_name_edit`, `groove_operator_toggle`, `groove_fm_copy`,
-  `groove_fm_import`): they exist in the device's engine as well as the
-  simulator's.
+  `groove_fm_import`), or ones the device's engine exports (check with
+  `nm sdk/lib/libfm1_engine.a`: `groove_sequence_replace`,
+  `groove_edit_checkpoint`): they exist there as well as in the simulator.
 - **Test on the host:** `tools/host-test/run.sh` builds the APP with the
   simulator platform natively and runs `*_test.c`; `CC=gcc SANITIZE=1` with
   ASan/UBSan. Every protocol change gets a case in
