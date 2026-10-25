@@ -80,6 +80,19 @@ jobs:
           ./tools/Build-Web.ps1
           ./sdk/Build.ps1 -Package
           Get-ChildItem build -Recurse -Include *.fwsc,*.html | ForEach-Object { "$($_.FullName) $($_.Length)" }
+          # What Sideband's updater needs beside the package (the same fields
+          # the workbench pins).
+          $fwsc = Get-ChildItem build -Recurse -Filter FM1_OFFICIAL_OPEN.fwsc | Select-Object -First 1
+          $id = Get-Content (Join-Path $fwsc.Directory.Parent.FullName 'build-identity.json') -Raw | ConvertFrom-Json
+          $meta = [ordered]@{schema=1; product=(Select-String -Path app/version.h -Pattern 'FM1_UPDATE_PRODUCT "([^"]+)"').Matches[0].Groups[1].Value;
+            family=7; release_version=$id.release_version; build_id=$id.build_id;
+            sha256=(Get-FileHash $fwsc.FullName -Algorithm SHA256).Hash.ToLowerInvariant(); bytes=$fwsc.Length;
+            loader_sha256=(Get-FileHash sdk/tools/pack/ota.bin -Algorithm SHA256).Hash.ToLowerInvariant();
+            source_url=$env:FM1_SOURCE_URL; commit=$env:GITHUB_SHA}
+          New-Item -ItemType Directory -Force build/sideband | Out-Null
+          Copy-Item $fwsc.FullName build/sideband/FM1_OFFICIAL_OPEN.fwsc
+          $meta | ConvertTo-Json | Set-Content build/sideband/sideband-update.json -Encoding utf8
+          Get-Content build/sideband/sideband-update.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -87,5 +100,5 @@ jobs:
           path: |
             build/preview/index.html
             build/official-web/*
-            build/dx7/generated/*.fwsc
+            build/sideband/*
           if-no-files-found: warn

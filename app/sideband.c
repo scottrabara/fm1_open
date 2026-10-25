@@ -22,7 +22,7 @@
 #include "sideband.h"
 #include <string.h>
 
-extern void groove_screen_snapshot(uint8_t state[8]);
+extern unsigned groove_screen_track(void);
 
 static unsigned watch_port = 3; /* 3: nobody watching */
 static uint32_t last_check, sums[GROOVE_TRACKS];
@@ -117,10 +117,9 @@ void sideband_parameter_change(const uint8_t *m, unsigned n)
     /* F0 43 10 gg pp vv F7 */
     if (n != 7 || m[2] != 0x10 || m[3] > 1) return;
     unsigned parameter = (unsigned)m[3] * 128U + m[4];
-    uint8_t view[8], pair[2] = {(uint8_t)parameter, m[5]};
+    uint8_t pair[2] = {(uint8_t)parameter, m[5]};
     if (parameter > 155) return;
-    groove_screen_snapshot(view);
-    (void)set_parameters(view[0], pair, 1);
+    (void)set_parameters(groove_screen_track(), pair, 1);
 }
 
 void sideband_dump_applied(void)
