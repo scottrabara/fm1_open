@@ -39,31 +39,34 @@ jobs:
         run: |
           if (Test-Path 'C:\JL\pi32\bin\clang.exe') { Write-Host 'Cached.'; exit 0 }
           curl.exe --fail --location --retry 3 --output jl.exe https://jl-update.oss-cn-shenzhen.aliyuncs.com/2.5.3.exe
-          $bytes = [IO.File]::ReadAllBytes("$PWD\jl.exe")
-          $text = [Text.Encoding]::ASCII.GetString($bytes)
-          foreach ($kind in @('Nullsoft', 'Inno Setup', '7-Zip', 'WiX', 'InstallShield', 'Advanced Installer', 'MSI')) {
-            if ($text.Contains($kind)) { Write-Host "Installer mentions: $kind" }
-          }
-          Write-Host "Installer size $($bytes.Length)"
-          # Most installers unpack with 7-Zip (on the runner); look for pi32 inside.
-          & 7z x jl.exe -oC:\jl-unpacked -y | Select-Object -Last 3
-          $clang = Get-ChildItem C:\jl-unpacked -Recurse -Filter clang.exe -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match 'pi32\\bin' } | Select-Object -First 1
-          if ($clang) {
-            $pi32 = $clang.Directory.Parent.FullName
-            New-Item -ItemType Directory -Force C:\JL | Out-Null
-            Copy-Item -Recurse $pi32 C:\JL\pi32
-            Write-Host "Unpacked $pi32"
-          } else {
-            Get-ChildItem C:\jl-unpacked -Recurse -Depth 3 -ErrorAction SilentlyContinue | Select-Object -First 60 | ForEach-Object FullName
-            foreach ($switches in @('/S /D=C:\JL', '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=C:\JL')) {
-              Write-Host "Trying jl.exe $switches"
-              $p = Start-Process -FilePath .\jl.exe -ArgumentList $switches -PassThru
-              if (!$p.WaitForExit(300000)) { $p.Kill(); Write-Host 'Timed out' }
-              if (Test-Path 'C:\JL\pi32\bin\clang.exe') { break }
+          # An Inno Setup installer (its silent mode waits on something):
+          # unpack it instead, and any MSI inside it.
+          choco install innoextract -y --no-progress | Out-Null
+          innoextract --silent --extract --output-dir C:\jl-unpacked jl.exe
+          if ($LASTEXITCODE) { throw "innoextract failed ($LASTEXITCODE)" }
+          $find = { Get-ChildItem C:\jl-unpacked -Recurse -Filter clang.exe -ErrorAction SilentlyContinue |
+                    Where-Object { $_.FullName -match 'pi32\\bin\\clang.exe$' } | Select-Object -First 1 }
+          $clang = & $find
+          if (!$clang) {
+            foreach ($msi in Get-ChildItem C:\jl-unpacked -Recurse -Filter *.msi) {
+              Write-Host "Unpacking $($msi.FullName)"
+              Start-Process msiexec -ArgumentList "/a `"$($msi.FullName)`" /qn TARGETDIR=C:\jl-unpacked\msi-$($msi.BaseName)" -Wait
             }
+            foreach ($zip in Get-ChildItem C:\jl-unpacked -Recurse -Include *.7z,*.zip) {
+              Write-Host "Unpacking $($zip.FullName)"
+              & 7z x $zip.FullName "-o$($zip.DirectoryName)\$($zip.BaseName)" -y | Out-Null
+            }
+            $clang = & $find
           }
-          if (!(Test-Path 'C:\JL\pi32\bin\clang.exe')) { throw 'No JieLi pi32 toolchain at C:\JL\pi32' }
-          (Get-FileHash C:\JL\pi32\bin\clang.exe -Algorithm SHA256).Hash
+          if (!$clang) {
+            Get-ChildItem C:\jl-unpacked -Recurse -Depth 4 -ErrorAction SilentlyContinue | Select-Object -First 80 | ForEach-Object FullName
+            throw 'No pi32\bin\clang.exe in the installer'
+          }
+          $pi32 = $clang.Directory.Parent.FullName
+          New-Item -ItemType Directory -Force C:\JL | Out-Null
+          Copy-Item -Recurse $pi32 C:\JL\pi32
+          Write-Host "Toolchain from $pi32"
+          (Get-FileHash C:\JL\pi32\bin\clang.exe -Algorithm SHA256).Hash.ToLowerInvariant()
       - name: Browser preview (simulator)
         shell: pwsh
         run: ./tools/Build-Web.ps1 -LocalPreview
