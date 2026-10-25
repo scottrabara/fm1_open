@@ -2894,9 +2894,6 @@ void groove_screen_snapshot(uint8_t state[8])
 }
 #endif
 
-/* The track selected on the panel (Sideband: where a DX7 parameter change goes). */
-unsigned groove_screen_track(void) { return track; }
-
 /* FM1 algorithm layout drawn with bounded RGB565 primitives. */
 static const uint8_t algorithms[32][12] = {
     {0x20, 0x00, 0x21, 0x00, 0x30, 0x00, 0x31, 0x00, 0x32, 0x00, 0x33, 0x01}, /* 1 */

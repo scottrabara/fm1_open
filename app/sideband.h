@@ -11,8 +11,6 @@ int sideband_command(unsigned cmd, unsigned source, const uint8_t *data, unsigne
                      uint8_t *out, unsigned *count);
 /* Appends 'S' and the version to command 22's reply. */
 void sideband_capabilities(uint8_t *out, unsigned *count);
-/* F0 43 10 gg pp vv F7 to the track selected on the panel. */
-void sideband_parameter_change(const uint8_t *message, unsigned bytes);
 /* After a single-voice dump was imported. */
 void sideband_dump_applied(void);
 void sideband_poll(uint32_t now);

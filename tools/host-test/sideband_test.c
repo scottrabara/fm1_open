@@ -104,24 +104,8 @@ int main(void)
         break;
     }
 
-    /* F0 43 10: a DX7 parameter change reaches the selected track. */
-    uint8_t view[8]; groove_screen_snapshot(view);
-    if (groove_source_type(view[0]) == GROOVE_DX7) {
-        patch_of(view[0], patch);
-        uint8_t level = patch[16] == 50 ? 51 : 50; /* OP6 output level */
-        uint8_t change[] = {0xF0, 0x43, 0x10, 0x00, 16, level, 0xF7};
-        send_raw(USB, change, sizeof change);
-        patch_of(view[0], patch);
-        CHECK(patch[16] == level, "parameter change: OP6 level %u, wanted %u", patch[16], level);
-        uint8_t wrongDevice[] = {0xF0, 0x43, 0x11, 0x00, 16, 10, 0xF7};
-        send_raw(USB, wrongDevice, sizeof wrongDevice);
-        patch_of(view[0], patch);
-        CHECK(patch[16] == level, "device 2's change was taken");
-    } else
-        printf("selected track %u isn't DX7: parameter change test skipped\n", view[0] + 1);
-
     /* 42: watch over Bluetooth. A panel edit sends an event; Sideband's own don't. */
-    uint8_t on = 1;
+    uint8_t on = (uint8_t)(dx7 + 1);
     ask(BLE, 42, &on, 1, r);
     CHECK(r[0] == 0, "watch: status %u", r[0]);
     sim_midi_capture(1);
@@ -151,6 +135,13 @@ int main(void)
     events = 0;
     while (next_reply(&port, &cmd, r, &count)) if (cmd == 0x6A) ++events;
     CHECK(events == 0, "the watcher's own dump sent %u events", events);
+    /* Another track's edit doesn't wake the watcher. */
+    for (unsigned t = 0; t < 8; t++) if (t != (unsigned)dx7 && groove_source_type(t) == GROOVE_DX7) {
+        groove_fm_edit(t, 134, 1); run(100); events = 0;
+        while (next_reply(&port, &cmd, r, &count)) if (cmd == 0x6A) ++events;
+        CHECK(events == 0, "track %u's edit sent %u events", t, events);
+        break;
+    }
     uint8_t off = 0;
     ask(BLE, 42, &off, 1, r);
     groove_fm_edit((unsigned)dx7, 134, 1);

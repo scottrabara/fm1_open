@@ -43,8 +43,7 @@ void fm1_app_sysex(const uint8_t *m, size_t n)
         return;
     if (!(n >= 8 && m[1] == 0x7d && m[2] == 'F' && m[3] == 'M' && m[4] == 2) &&
         !(n == 6 && m[1] == 0x7f && (m[2] == 0 || m[2] == 0x7f) && m[3] == 6) &&
-        !(n == 163 && m[1] == 0x43 && m[2] < 16 && m[3] == 0 && m[4] == 1 && m[5] == 27) &&
-        !(n == 7 && m[1] == 0x43 && m[2] == 0x10)) /* Sideband: DX7 parameter change */
+        !(n == 163 && m[1] == 0x43 && m[2] < 16 && m[3] == 0 && m[4] == 1 && m[5] == 27))
         return;
     incoming.source = (uint8_t)fm1_midi_input_source();
     memcpy(incoming.bytes, m, n);
@@ -274,14 +273,6 @@ void groove_transfer_poll(void)
         barrier();
         incoming.length = 0;
         if (groove_midi_clock_accept(source, code == 1 ? 0xfc : 0xfa)) groove_screen_mmc(code);
-        return;
-    }
-    if (message[1] == 0x43 && n == 7) {
-        uint8_t change[7];
-        memcpy(change, message, 7);
-        barrier();
-        incoming.length = 0;
-        sideband_parameter_change(change, 7);
         return;
     }
     if (message[1] == 0x43) {
