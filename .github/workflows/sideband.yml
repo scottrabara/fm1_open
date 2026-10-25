@@ -1,0 +1,72 @@
+# Builds and tests the fork: host tests on Linux (the APP against the
+# browser simulator's platform, with and without sanitizers), then on
+# Windows the browser preview and the firmware with its workbench.
+name: build
+on:
+  push:
+    branches: [main, sideband]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host tests (clang)
+        run: ./tools/host-test/run.sh
+      - name: Host tests (gcc, AddressSanitizer + UBSan)
+        run: CC=gcc SANITIZE=1 ./tools/host-test/run.sh
+
+  windows:
+    needs: host-tests
+    runs-on: windows-latest
+    env:
+      FM1_PI32_TOOLCHAIN: C:\JL\pi32
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache the JieLi toolchain and WASI SDK
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\JL
+            build\tools
+          key: toolchains-jieli-2.5.3-wasi-27
+      - name: Install the JieLi toolchain 2.5.3
+        shell: pwsh
+        run: |
+          if (Test-Path 'C:\JL\pi32\bin\clang.exe') { Write-Host 'Cached.'; exit 0 }
+          curl.exe --fail --location --retry 3 --output jl.exe https://jl-update.oss-cn-shenzhen.aliyuncs.com/2.5.3.exe
+          # Silent switches for the common installer kinds, one after another.
+          foreach ($switches in @('/S /D=C:\JL', '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=C:\JL', '/quiet')) {
+            Write-Host "Trying jl.exe $switches"
+            $p = Start-Process -FilePath .\jl.exe -ArgumentList $switches -Wait -PassThru
+            Write-Host "exit $($p.ExitCode)"
+            if (Test-Path 'C:\JL\pi32\bin\clang.exe') { break }
+          }
+          if (!(Test-Path 'C:\JL\pi32\bin\clang.exe')) {
+            Get-ChildItem C:\JL -Recurse -Depth 2 -ErrorAction SilentlyContinue | Select-Object -First 40 | ForEach-Object FullName
+            throw 'JieLi toolchain did not install to C:\JL\pi32'
+          }
+      - name: Browser preview (simulator)
+        shell: pwsh
+        run: ./tools/Build-Web.ps1 -LocalPreview
+      - name: Firmware and workbench
+        shell: pwsh
+        env:
+          FM1_SOURCE_URL: https://github.com/${{ github.repository }}/archive/${{ github.sha }}.tar.gz
+        run: |
+          ./build.bat --web
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ./build.bat --package
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Get-ChildItem build -Recurse -Include *.fwsc,*.html | ForEach-Object { "$($_.FullName) $($_.Length)" }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sideband-firmware
+          path: |
+            build/preview/index.html
+            build/official-web/*
+            build/dx7/generated/*.fwsc
+          if-no-files-found: warn

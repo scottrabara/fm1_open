@@ -3,6 +3,7 @@
 #include "tuning_hook.h"
 #include "fm_patch.h"
 #include "fm1_engine_control.h"
+#include "sideband.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -42,7 +43,8 @@ void fm1_app_sysex(const uint8_t *m, size_t n)
         return;
     if (!(n >= 8 && m[1] == 0x7d && m[2] == 'F' && m[3] == 'M' && m[4] == 2) &&
         !(n == 6 && m[1] == 0x7f && (m[2] == 0 || m[2] == 0x7f) && m[3] == 6) &&
-        !(n == 163 && m[1] == 0x43 && m[2] < 16 && m[3] == 0 && m[4] == 1 && m[5] == 27))
+        !(n == 163 && m[1] == 0x43 && m[2] < 16 && m[3] == 0 && m[4] == 1 && m[5] == 27) &&
+        !(n == 7 && m[1] == 0x43 && m[2] == 0x10)) /* Sideband: DX7 parameter change */
         return;
     incoming.source = (uint8_t)fm1_midi_input_source();
     memcpy(incoming.bytes, m, n);
@@ -92,15 +94,19 @@ static uint32_t get32(const uint8_t *p)
 { return p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
 static void put32(uint8_t *p, uint32_t value)
 { for (unsigned i = 0; i < 4; ++i) p[i] = (uint8_t)(value >> (i * 8U)); }
+static unsigned command_source;
 static int command(unsigned cmd, const uint8_t *data, unsigned n, uint8_t *out, unsigned *count)
 {
     int r = GROOVE_PROJECT_INVALID;
     *count = 0;
+    r = sideband_command(cmd, command_source, data, n, out, count);
+    if (r != SIDEBAND_NOT_MINE) return r;
+    r = GROOVE_PROJECT_INVALID;
     /* Additive capability reply; command 21 retains its old exact layout. */
     if (cmd == 22 && !n) {
         out[0]=1; out[1]=128; out[2]=4; out[3]=(uint8_t)groove_fm_library_available();
         put32(out+4,GROOVE_SAMPLE_LIMIT); out[8]=3; /* session roles and extended/synchronized delay */
-        *count=9; return 0;
+        *count=9; sideband_capabilities(out, count); return 0;
     }
     if (cmd == 21 && !n) {
         out[0] = groove_tuning_capture && groove_tuning_apply ? 1 : 0;
@@ -236,6 +242,7 @@ void groove_transfer_poll(void)
     uint32_t now = fm1_millis();
     if (transfer && now - last_activity > 10000U)
         transfer_cancel();
+    sideband_poll(now);
     /* Retry each port independently. A blocked BLE reply never delays USB
      * notes or its transfer ACK. Cached retries also belong to that port. */
     for (unsigned p=0;p<3;++p) if (replies[p].pending) {
@@ -269,6 +276,14 @@ void groove_transfer_poll(void)
         if (groove_midi_clock_accept(source, code == 1 ? 0xfc : 0xfa)) groove_screen_mmc(code);
         return;
     }
+    if (message[1] == 0x43 && n == 7) {
+        uint8_t change[7];
+        memcpy(change, message, 7);
+        barrier();
+        incoming.length = 0;
+        sideband_parameter_change(change, 7);
+        return;
+    }
     if (message[1] == 0x43) {
         unsigned sum = 0;
         for (unsigned i = 6; i < 162; ++i)
@@ -283,6 +298,7 @@ void groove_transfer_poll(void)
             for (unsigned track=0;track<GROOVE_TRACKS;++track)
                 if (groove_track_role(track) != GROOVE_TRACK_OFF && channel == groove_midi_input_channel(track))
                     (void)groove_fm_import(track, patch);
+            sideband_dump_applied();
             return;
         }
         goto discard;
@@ -323,6 +339,7 @@ void groove_transfer_poll(void)
     c->request_length = n;
     c->reply_length = 0;
     unsigned count = 0;
+    command_source = source;
     int r = command(c->request[5], data, bytes, response + 1, &count);
     if (!r && (transfer || groove_samples_status() == 3)) session_source = source;
     response[0] = (uint8_t)(r < 0 ? 64 - r : r);
